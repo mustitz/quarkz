@@ -1,0 +1,21 @@
+# Zig build artifacts
+zig-out/
+zig-cache/
+.zig-cache/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vim/
+.netrwhist
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak

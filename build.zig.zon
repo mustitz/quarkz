@@ -1,0 +1,14 @@
+.{
+    .name = .quarkz,
+    .version = "0.1.0",
+    .fingerprint = 0xa2b8166e34f39fab,
+    .minimum_zig_version = "0.15.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}
