@@ -39,6 +39,30 @@ pub const Nucleon = struct {
     }
 };
 
+pub const Atom = struct {
+    name: []const u8,
+    birthTs: i128,
+    durationNs: u128,
+    nucleons: DList,
+    link: DList,
+
+    pub fn destroy(self: *Atom, allocator: Allocator) void {
+        var iter = self.nucleons.iterator();
+        while (iter.next()) |node| {
+            const nucleon = node.containerOf(Nucleon, "link");
+            nucleon.destroy(allocator);
+        }
+        allocator.destroy(self);
+    }
+
+    pub fn decay(self: *Atom) void {
+        std.debug.assert(self.durationNs == 0);
+        const duration = std.time.nanoTimestamp() - self.birthTs;
+        std.debug.assert(duration >= 0);
+        self.durationNs = @intCast(duration);
+    }
+};
+
 fn coords() Coordinates {
     return Coordinates{
         .ts = std.time.nanoTimestamp(),
@@ -115,6 +139,16 @@ pub fn createNucleonFmt(
     nucleon.msg = pmsg[0..zmsg-1];
 
     return nucleon;
+}
+
+pub fn createAtom(allocator: Allocator, name: []const u8) !*Atom {
+    const atom = try allocator.create(Atom);
+    atom.birthTs = std.time.nanoTimestamp();
+    atom.name = name;
+    atom.nucleons.init();
+    atom.durationNs = 0;
+    atom.link.init();
+    return atom;
 }
 
 test "two coords" {
@@ -217,4 +251,20 @@ test "nucleon create fmt with struct gluon" {
    try testing.expectEqual(MAGIC_STRUCT.id, gluon.id);
    try testing.expectEqual(MAGIC_STRUCT.value, gluon.value);
    try testing.expectEqual(MAGIC_STRUCT.flag, gluon.flag);
+}
+
+test "atom create, decay and destroy" {
+    const allocator = std.testing.allocator;
+    const name = "Hg";
+
+    const atom = try createAtom(allocator, name);
+    defer atom.destroy(allocator);
+
+    try testing.expect(atom.birthTs > 0);
+    try testing.expectEqualStrings(name, atom.name);
+    try testing.expect(atom.nucleons.isEmpty());
+    try testing.expectEqual(0, atom.durationNs);
+
+    atom.decay();
+    try testing.expect(atom.durationNs > 0);
 }
