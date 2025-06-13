@@ -62,6 +62,56 @@ pub const Atom = struct {
         std.debug.assert(duration >= 0);
         self.durationNs = @intCast(duration);
     }
+
+    fn newNucleon(self: *Atom, level: Level, comptime msg: []const u8, gluon: anytype, loc: Location) !void {
+        const nucleon = try createNucleon(self.cosmos.allocator, level, loc, msg, gluon);
+        self.nucleons.insertBefore(&nucleon.link);
+    }
+
+    fn newNucleonFmt(self: *Atom, level: Level, comptime fmt: []const u8, args: anytype, gluon: anytype, loc: Location) !void {
+        const nucleon = try createNucleonFmt(self.cosmos.allocator, level, loc, fmt, args, gluon);
+        self.nucleons.insertBefore(&nucleon.link);
+    }
+
+    pub fn trace(self: *Atom, comptime msg: []const u8, gluon: anytype) !void {
+        try self.newNucleon(.trace, msg, gluon, @src());
+    }
+
+    pub fn debug(self: *Atom, comptime msg: []const u8, gluon: anytype) !void {
+        try self.newNucleon(.debug, msg, gluon, @src());
+    }
+
+    pub fn info(self: *Atom, comptime msg: []const u8, gluon: anytype) !void {
+        try self.newNucleon(.info, msg, gluon, @src());
+    }
+
+    pub fn warn(self: *Atom, comptime msg: []const u8, gluon: anytype) !void {
+        try self.newNucleon(.warn, msg, gluon, @src());
+    }
+
+    pub fn err(self: *Atom, comptime msg: []const u8, gluon: anytype) !void {
+        try self.newNucleon(.err, msg, gluon, @src());
+    }
+
+    pub fn traceFmt(self: *Atom, comptime fmt: []const u8, args: anytype, gluon: anytype) !void {
+        try self.newNucleonFmt(.trace, fmt, args, gluon, @src());
+    }
+
+    pub fn debugFmt(self: *Atom, comptime fmt: []const u8, args: anytype, gluon: anytype) !void {
+        try self.newNucleonFmt(.debug, fmt, args, gluon, @src());
+    }
+
+    pub fn infoFmt(self: *Atom, comptime fmt: []const u8, args: anytype, gluon: anytype) !void {
+        try self.newNucleonFmt(.info, fmt, args, gluon, @src());
+    }
+
+    pub fn warnFmt(self: *Atom, comptime fmt: []const u8, args: anytype, gluon: anytype) !void {
+        try self.newNucleonFmt(.warn, fmt, args, gluon, @src());
+    }
+
+    pub fn errFmt(self: *Atom, comptime fmt: []const u8, args: anytype, gluon: anytype) !void {
+        try self.newNucleonFmt(.err, fmt, args, gluon, @src());
+    }
 };
 
 pub const Cosmos = struct {
@@ -307,4 +357,98 @@ test "cosmos create and destroy" {
     defer cosmos.destroy();
 
     try testing.expect(cosmos.atoms.isEmpty());
+}
+
+test "atom logging methods with static messages" {
+    const cosmos = try createCosmos(std.testing.allocator);
+    defer cosmos.destroy();
+
+    const atom = try cosmos.newAtom("TestAtom");
+
+    const debug_gluon: i32 = 42;
+    const info_gluon = .{ .status = "ok" };
+    const err_gluon = .{ .code = 500, .desc = "server error" };
+
+    try atom.trace("trace message", .{});
+    try atom.debug("debug message", debug_gluon);
+    try atom.info("info message", info_gluon);
+    try atom.warn("warn message", true);
+    try atom.err("error message", err_gluon);
+
+    try testing.expectEqual(5, atom.nucleons.count() - 1); // -1 for the head node
+
+    var iter = atom.nucleons.iterator();
+
+    const n1 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.trace, n1.level);
+    try testing.expectEqualStrings("trace message", n1.msg);
+
+    const n2 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.debug, n2.level);
+    try testing.expectEqualStrings("debug message", n2.msg);
+    try testing.expectEqual(debug_gluon, n2.getGluon(i32).*);
+
+    const n3 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.info, n3.level);
+    try testing.expectEqualStrings("info message", n3.msg);
+    const n3_gluon = n3.getGluon(@TypeOf(info_gluon));
+    try testing.expectEqualStrings(info_gluon.status, n3_gluon.status);
+
+    const n4 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.warn, n4.level);
+    try testing.expectEqualStrings("warn message", n4.msg);
+    try testing.expectEqual(true, n4.getGluon(bool).*);
+
+    const n5 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.err, n5.level);
+    try testing.expectEqualStrings("error message", n5.msg);
+    const n5_gluon = n5.getGluon(@TypeOf(err_gluon));
+    try testing.expectEqual(err_gluon.code, n5_gluon.code);
+    try testing.expectEqualStrings(err_gluon.desc, n5_gluon.desc);
+}
+
+test "atom formatting methods without gluons using two atoms" {
+    const cosmos = try createCosmos(std.testing.allocator);
+    defer cosmos.destroy();
+
+    const atom1 = try cosmos.newAtom("FirstAtom");
+    const atom2 = try cosmos.newAtom("SecondAtom");
+
+    try atom1.traceFmt("trace count: {}", .{1}, .{});
+    try atom1.debugFmt("debug value: {d:.2}", .{3.14159}, .{});
+    try atom1.infoFmt("info status: {s}", .{"active"}, .{});
+
+    try atom2.warnFmt("warn level: {} threshold: {}", .{5, 100}, .{});
+    try atom2.errFmt("error code: {d} message: {s}", .{404, "not found"}, .{});
+
+    try testing.expectEqual(3, atom1.nucleons.count() - 1); // -1 for the head node
+    try testing.expectEqual(2, atom2.nucleons.count() - 1); // -1 for the head node
+
+
+
+    var iter1 = atom1.nucleons.iterator();
+
+    const n1 = iter1.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.trace, n1.level);
+    try testing.expectEqualStrings("trace count: 1", n1.msg);
+
+    const n2 = iter1.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.debug, n2.level);
+    try testing.expectEqualStrings("debug value: 3.14", n2.msg);
+
+    const n3 = iter1.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.info, n3.level);
+    try testing.expectEqualStrings("info status: active", n3.msg);
+
+    var iter2 = atom2.nucleons.iterator();
+
+
+
+    const n4 = iter2.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.warn, n4.level);
+    try testing.expectEqualStrings("warn level: 5 threshold: 100", n4.msg);
+
+    const n5 = iter2.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.err, n5.level);
+    try testing.expectEqualStrings("error code: 404 message: not found", n5.msg);
 }
