@@ -63,6 +63,19 @@ pub const Atom = struct {
     }
 };
 
+pub const Cosmos = struct {
+    atoms: DList,
+
+    pub fn destroy(self: *Cosmos, allocator: Allocator) void {
+        var iter = self.atoms.iterator();
+        while (iter.next()) |node| {
+            const atom = node.containerOf(Atom, "link");
+            atom.destroy(allocator);
+        }
+        allocator.destroy(self);
+    }
+};
+
 fn coords() Coordinates {
     return Coordinates{
         .ts = std.time.nanoTimestamp(),
@@ -149,6 +162,12 @@ pub fn createAtom(allocator: Allocator, name: []const u8) !*Atom {
     atom.durationNs = 0;
     atom.link.init();
     return atom;
+}
+
+pub fn createCosmos(allocator: Allocator) !*Cosmos {
+    const cosmos = try allocator.create(Cosmos);
+    cosmos.atoms.init();
+    return cosmos;
 }
 
 test "two coords" {
@@ -267,4 +286,13 @@ test "atom create, decay and destroy" {
 
     atom.decay();
     try testing.expect(atom.durationNs > 0);
+}
+
+test "cosmos create and destroy" {
+    const allocator = std.testing.allocator;
+
+    const cosmos = try createCosmos(allocator);
+    defer cosmos.destroy(allocator);
+
+    try testing.expect(cosmos.atoms.isEmpty());
 }
