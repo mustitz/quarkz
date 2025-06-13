@@ -150,6 +150,27 @@ pub const Atom = struct {
     }
 };
 
+pub const Cosmos = struct {
+    atoms: DList,
+    allocator: Allocator,
+
+    pub fn create(allocator: Allocator) !*Cosmos {
+        const cosmos = try allocator.create(Cosmos);
+        cosmos.atoms.init();
+        cosmos.allocator = allocator;
+        return cosmos;
+    }
+
+    pub fn destroy(self: *Cosmos) void {
+        var iter = self.atoms.iterator();
+        while (iter.next()) |node| {
+            const atom = node.containerOf(Atom, "link");
+            atom.destroy(self.allocator);
+        }
+        self.allocator.destroy(self);
+    }
+};
+
 test "two coords" {
     const coords1 = Coordinates.init();
     const coords2 = Coordinates.init();
@@ -266,4 +287,13 @@ test "atom create, decay and destroy" {
 
     atom.decay();
     try testing.expect(atom.durationNs > 0);
+}
+
+test "cosmos create and destroy" {
+    const allocator = std.testing.allocator;
+
+    const cosmos = try Cosmos.create(allocator);
+    defer cosmos.destroy();
+
+    try testing.expect(cosmos.atoms.isEmpty());
 }
