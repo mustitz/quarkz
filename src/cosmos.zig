@@ -151,6 +151,77 @@ pub const Atom = struct {
         std.debug.assert(duration >= 0);
         self.durationNs = @intCast(duration);
     }
+
+    fn newNucleon(
+        self: *Atom,
+        level: Level,
+        comptime msg: []const u8,
+        gluon: anytype,
+        loc: Location
+    ) !void {
+        const nucleon = try Nucleon.create(self.cosmos.allocator, level, loc, msg, gluon);
+        self.nucleons.insertBefore(&nucleon.link);
+    }
+
+    fn newNucleonFmt(
+        self: *Atom,
+        level: Level,
+        comptime fmt: []const u8,
+        args: anytype,
+        gluon: anytype,
+        loc: Location
+    ) !void {
+        const nucleon = try Nucleon.createFmt(self.cosmos.allocator, level, loc, fmt, args, gluon);
+        self.nucleons.insertBefore(&nucleon.link);
+    }
+
+    pub fn trace(self: *Atom, loc: Location, comptime msg: []const u8, gluon: anytype) void {
+        self.newNucleon(.trace, msg, gluon, loc) catch {};
+    }
+
+    pub fn debug(self: *Atom, loc: Location, comptime msg: []const u8, gluon: anytype) void {
+        self.newNucleon(.debug, msg, gluon, loc) catch {};
+    }
+
+    pub fn info(self: *Atom, loc: Location, comptime msg: []const u8, gluon: anytype) void {
+        self.newNucleon(.info, msg, gluon, loc) catch {};
+    }
+
+    pub fn notice(self: *Atom, loc: Location, comptime msg: []const u8, gluon: anytype) void {
+        self.newNucleon(.notice, msg, gluon, loc) catch {};
+    }
+
+    pub fn warn(self: *Atom, loc: Location, comptime msg: []const u8, gluon: anytype) void {
+        self.newNucleon(.warn, msg, gluon, loc) catch {};
+    }
+
+    pub fn err(self: *Atom, loc: Location, comptime msg: []const u8, gluon: anytype) void {
+        self.newNucleon(.err, msg, gluon, loc) catch {};
+    }
+
+    pub fn traceFmt(self: *Atom, loc: Location, comptime fmt: []const u8, args: anytype, gluon: anytype) void {
+        self.newNucleonFmt(.trace, fmt, args, gluon, loc) catch {};
+    }
+
+    pub fn debugFmt(self: *Atom, loc: Location, comptime fmt: []const u8, args: anytype, gluon: anytype) void {
+        self.newNucleonFmt(.debug, fmt, args, gluon, loc) catch {};
+    }
+
+    pub fn infoFmt(self: *Atom, loc: Location, comptime fmt: []const u8, args: anytype, gluon: anytype) void {
+        self.newNucleonFmt(.info, fmt, args, gluon, loc) catch {};
+    }
+
+    pub fn noticeFmt(self: *Atom, loc: Location, comptime fmt: []const u8, args: anytype, gluon: anytype) void {
+        self.newNucleonFmt(.info, fmt, args, gluon, loc) catch {};
+    }
+
+    pub fn warnFmt(self: *Atom, loc: Location, comptime fmt: []const u8, args: anytype, gluon: anytype) void {
+        self.newNucleonFmt(.warn, fmt, args, gluon, loc) catch {};
+    }
+
+    pub fn errFmt(self: *Atom, loc: Location, comptime fmt: []const u8, args: anytype, gluon: anytype) void {
+        self.newNucleonFmt(.err, fmt, args, gluon, loc) catch {};
+    }
 };
 
 pub const Cosmos = struct {
@@ -307,4 +378,103 @@ test "cosmos create and destroy" {
     defer cosmos.destroy();
 
     try testing.expect(cosmos.atoms.isEmpty());
+}
+
+test "atom logging methods with static messages" {
+    const cosmos = try Cosmos.create(std.testing.allocator);
+    defer cosmos.destroy();
+
+    const atom = try cosmos.newAtom("TestAtom");
+
+    const debug_gluon: i32 = 42;
+    const info_gluon = .{ .status = "ok" };
+    const err_gluon = .{ .code = 500, .desc = "server error" };
+
+    atom.trace(@src(), "trace message", .{});
+    atom.debug(@src(), "debug message", debug_gluon);
+    atom.info(@src(), "info message", info_gluon);
+    atom.notice(@src(), "notice message", .{});
+    atom.warn(@src(), "warn message", true);
+    atom.err(@src(), "error message", err_gluon);
+
+    try testing.expectEqual(6, atom.nucleons.count() - 1); // -1 for the head node
+
+    var iter = atom.nucleons.iterator();
+
+    const n1 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.trace, n1.level);
+    try testing.expectEqualStrings("trace message", n1.msg);
+
+    const n2 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.debug, n2.level);
+    try testing.expectEqualStrings("debug message", n2.msg);
+    try testing.expectEqual(debug_gluon, n2.getGluon(i32).*);
+
+    const n3 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.info, n3.level);
+    try testing.expectEqualStrings("info message", n3.msg);
+    const n3_gluon = n3.getGluon(@TypeOf(info_gluon));
+    try testing.expectEqualStrings(info_gluon.status, n3_gluon.status);
+
+    const n4 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.notice, n4.level);
+    try testing.expectEqualStrings("notice message", n4.msg);
+
+    const n5 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.warn, n5.level);
+    try testing.expectEqualStrings("warn message", n5.msg);
+    try testing.expectEqual(true, n5.getGluon(bool).*);
+
+    const n6 = iter.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.err, n6.level);
+    try testing.expectEqualStrings("error message", n6.msg);
+    const n6_gluon = n6.getGluon(@TypeOf(err_gluon));
+    try testing.expectEqual(err_gluon.code, n6_gluon.code);
+    try testing.expectEqualStrings(err_gluon.desc, n6_gluon.desc);
+}
+
+test "atom formatting methods without gluons using two atoms" {
+    const cosmos = try Cosmos.create(std.testing.allocator);
+    defer cosmos.destroy();
+
+    const atom1 = try cosmos.newAtom("FirstAtom");
+    const atom2 = try cosmos.newAtom("SecondAtom");
+
+    atom1.traceFmt(@src(), "trace count: {}", .{1}, .{});
+    atom1.debugFmt(@src(), "debug value: {d:.2}", .{3.14159}, .{});
+    atom1.infoFmt(@src(), "info status: {s}", .{"active"}, .{});
+
+    atom2.warnFmt(@src(), "warn level: {} threshold: {}", .{5, 100}, .{});
+    atom2.errFmt(@src(), "error code: {d} message: {s}", .{404, "not found"}, .{});
+
+    try testing.expectEqual(3, atom1.nucleons.count() - 1); // -1 for the head node
+    try testing.expectEqual(2, atom2.nucleons.count() - 1); // -1 for the head node
+
+
+
+    var iter1 = atom1.nucleons.iterator();
+
+    const n1 = iter1.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.trace, n1.level);
+    try testing.expectEqualStrings("trace count: 1", n1.msg);
+
+    const n2 = iter1.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.debug, n2.level);
+    try testing.expectEqualStrings("debug value: 3.14", n2.msg);
+
+    const n3 = iter1.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.info, n3.level);
+    try testing.expectEqualStrings("info status: active", n3.msg);
+
+    var iter2 = atom2.nucleons.iterator();
+
+
+
+    const n4 = iter2.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.warn, n4.level);
+    try testing.expectEqualStrings("warn level: 5 threshold: 100", n4.msg);
+
+    const n5 = iter2.next().?.containerOf(Nucleon, "link");
+    try testing.expectEqual(.err, n5.level);
+    try testing.expectEqualStrings("error code: 404 message: not found", n5.msg);
 }
