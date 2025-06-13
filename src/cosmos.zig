@@ -65,14 +65,15 @@ pub const Atom = struct {
 
 pub const Cosmos = struct {
     atoms: DList,
+    allocator: Allocator,
 
-    pub fn destroy(self: *Cosmos, allocator: Allocator) void {
+    pub fn destroy(self: *Cosmos) void {
         var iter = self.atoms.iterator();
         while (iter.next()) |node| {
             const atom = node.containerOf(Atom, "link");
-            atom.destroy(allocator);
+            atom.destroy(self.allocator);
         }
-        allocator.destroy(self);
+        self.allocator.destroy(self);
     }
 };
 
@@ -167,6 +168,7 @@ pub fn createAtom(allocator: Allocator, name: []const u8) !*Atom {
 pub fn createCosmos(allocator: Allocator) !*Cosmos {
     const cosmos = try allocator.create(Cosmos);
     cosmos.atoms.init();
+    cosmos.allocator = allocator;
     return cosmos;
 }
 
@@ -292,7 +294,7 @@ test "cosmos create and destroy" {
     const allocator = std.testing.allocator;
 
     const cosmos = try createCosmos(allocator);
-    defer cosmos.destroy(allocator);
+    defer cosmos.destroy();
 
     try testing.expect(cosmos.atoms.isEmpty());
 }
