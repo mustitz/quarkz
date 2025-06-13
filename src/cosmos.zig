@@ -118,28 +118,31 @@ const Nucleon = struct {
 
 pub const Atom = struct {
     name: []const u8,
+    cosmos: *Cosmos,
     birthTs: i128,
     durationNs: u128,
     nucleons: DList,
     link: DList,
 
-    pub fn create(allocator: Allocator, name: []const u8) !*Atom {
-        const atom = try allocator.create(Atom);
-        atom.birthTs = std.time.nanoTimestamp();
+    pub fn create(name: []const u8, cosmos: *Cosmos) !*Atom {
+        const atom = try cosmos.allocator.create(Atom);
         atom.name = name;
+        atom.cosmos = cosmos;
+        atom.birthTs = std.time.nanoTimestamp();
         atom.nucleons.init();
         atom.durationNs = 0;
         atom.link.init();
         return atom;
     }
 
-    pub fn destroy(self: *Atom, allocator: Allocator) void {
+    pub fn destroy(self: *Atom) void {
         var iter = self.nucleons.iterator();
         while (iter.next()) |node| {
             const nucleon = node.containerOf(Nucleon, "link");
-            nucleon.destroy(allocator);
+            nucleon.destroy(self.cosmos.allocator);
         }
-        allocator.destroy(self);
+        self.link.remove();
+        self.cosmos.allocator.destroy(self);
     }
 
     pub fn decay(self: *Atom) void {
@@ -165,9 +168,15 @@ pub const Cosmos = struct {
         var iter = self.atoms.iterator();
         while (iter.next()) |node| {
             const atom = node.containerOf(Atom, "link");
-            atom.destroy(self.allocator);
+            atom.destroy();
         }
         self.allocator.destroy(self);
+    }
+
+    pub fn newAtom(self: *Cosmos, name: []const u8) !*Atom {
+        const atom = try Atom.create(name, self);
+        self.atoms.insertBefore(&atom.link);
+        return atom;
     }
 };
 
@@ -274,11 +283,13 @@ test "nucleon create fmt with struct gluon" {
 }
 
 test "atom create, decay and destroy" {
-    const allocator = std.testing.allocator;
     const name = "Hg";
 
-    const atom = try Atom.create(allocator, name);
-    defer atom.destroy(allocator);
+    const cosmos = try Cosmos.create(std.testing.allocator);
+    defer cosmos.destroy();
+
+    const atom = try cosmos.newAtom(name);
+    defer atom.destroy();
 
     try testing.expect(atom.birthTs > 0);
     try testing.expectEqualStrings(name, atom.name);
