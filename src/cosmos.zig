@@ -19,6 +19,33 @@ const Coordinates = struct {
     tid: i32,
 };
 
+pub const IRecorder = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    const VTable = struct {
+        record: *const fn(ptr: *anyopaque, nucleon: *const Nucleon) void,
+        shouldRecord: *const fn(ptr: *anyopaque, level: Level) bool,
+        deinit: ?*const fn(ptr: *anyopaque) void,
+    };
+
+    pub fn record(self: IRecorder, nucleon: *const Nucleon) void {
+        self.vtable.record(self.ptr, nucleon);
+    }
+
+    pub fn shouldRecord(self: IRecorder, level: Level) bool {
+        return self.vtable.shouldRecord(self.ptr, level);
+    }
+
+    pub fn deinit(self: IRecorder) void {
+        if (self.vtable.deinit) |deinitFn| {
+            deinitFn(self.ptr);
+        }
+    }
+};
+
+const IRecorders = std.ArrayList(IRecorder);
+
 pub const Nucleon = struct {
     const ALIGN = 16;
     const OGLUON = std.mem.alignForward(usize, @sizeOf(Nucleon), ALIGN);
@@ -70,8 +97,9 @@ pub const Atom = struct {
         gluon: anytype,
         loc: Location
     ) !void {
+        const index: usize = try self.firstRecorder(level);
         const nucleon = try createNucleon(self.cosmos.allocator, level, loc, msg, gluon);
-        self.nucleons.insertBefore(&nucleon.link);
+        self.doRecording(nucleon, index);
     }
 
     fn newNucleonFmt(
@@ -82,8 +110,25 @@ pub const Atom = struct {
         gluon: anytype,
         loc: Location
     ) !void {
+        const index: usize = try self.firstRecorder(level);
         const nucleon = try createNucleonFmt(self.cosmos.allocator, level, loc, fmt, args, gluon);
+        self.doRecording(nucleon, index);
+    }
+
+    fn firstRecorder(self: *Atom, level: Level) !usize {
+        for (self.cosmos.recorders.items, 0..) |recorder, i| {
+            if (recorder.shouldRecord(level)) return i;
+        }
+        return error.NotFound;
+    }
+
+    fn doRecording(self: *Atom, nucleon: *Nucleon, index: usize) void {
         self.nucleons.insertBefore(&nucleon.link);
+        for (self.cosmos.recorders.items[index..]) |recorder| {
+            if (recorder.shouldRecord(nucleon.level)) {
+                recorder.record(nucleon);
+            }
+        }
     }
 
     pub fn trace(self: *Atom, comptime msg: []const u8, gluon: anytype) void {
@@ -130,6 +175,7 @@ pub const Atom = struct {
 pub const Cosmos = struct {
     atoms: DList,
     allocator: Allocator,
+    recorders: IRecorders,
 
     pub fn destroy(self: *Cosmos) void {
         var iter = self.atoms.iterator();
@@ -137,6 +183,7 @@ pub const Cosmos = struct {
             const atom = node.containerOf(Atom, "link");
             atom.destroy();
         }
+        self.recorders.deinit();
         self.allocator.destroy(self);
     }
 
@@ -144,6 +191,10 @@ pub const Cosmos = struct {
         const atom = try createAtom(name, self);
         self.atoms.insertBefore(&atom.link);
         return atom;
+    }
+
+    pub fn addRecorder(self: *Cosmos, recorder: IRecorder) !void {
+        try self.recorders.append(recorder);
     }
 };
 
@@ -240,8 +291,42 @@ pub fn createCosmos(allocator: Allocator) !*Cosmos {
     const cosmos = try allocator.create(Cosmos);
     cosmos.atoms.init();
     cosmos.allocator = allocator;
+    cosmos.recorders = IRecorders.init(allocator);
     return cosmos;
 }
+
+fn blackHoleRecord(ptr: *anyopaque, nucleon: *const Nucleon) void {
+    _ = ptr;
+    _ = nucleon;
+}
+
+fn blackHoleShouldRecord(ptr: *anyopaque, level: Level) bool {
+    _ = ptr;
+    _ = level;
+    return true;
+}
+
+const blackHoleRecorder = IRecorder{
+    .ptr = undefined,
+    .vtable = &.{
+        .record = blackHoleRecord,
+        .shouldRecord = blackHoleShouldRecord,
+        .deinit = null,
+    },
+};
+
+const BlackHoleRecorder = struct {
+    pub fn record(self: *BlackHoleRecorder, nucleon: *const Nucleon) void {
+        _ = self;
+        _ = nucleon;
+    }
+
+    pub fn shouldRecord(self: *BlackHoleRecorder, level: Level) bool {
+        _ = self;
+        _ = level;
+        return true;
+    }
+};
 
 test "two coords" {
     const coords1 = coords();
@@ -350,6 +435,7 @@ test "atom create, decay and destroy" {
 
     const cosmos = try createCosmos(std.testing.allocator);
     defer cosmos.destroy();
+    try cosmos.addRecorder(blackHoleRecorder);
 
     const atom = try createAtom(name, cosmos);
     defer atom.destroy();
@@ -375,6 +461,7 @@ test "cosmos create and destroy" {
 test "atom logging methods with static messages" {
     const cosmos = try createCosmos(std.testing.allocator);
     defer cosmos.destroy();
+    try cosmos.addRecorder(blackHoleRecorder);
 
     const atom = try cosmos.newAtom("TestAtom");
 
@@ -423,6 +510,7 @@ test "atom logging methods with static messages" {
 test "atom formatting methods without gluons using two atoms" {
     const cosmos = try createCosmos(std.testing.allocator);
     defer cosmos.destroy();
+    try cosmos.addRecorder(blackHoleRecorder);
 
     const atom1 = try cosmos.newAtom("FirstAtom");
     const atom2 = try cosmos.newAtom("SecondAtom");
