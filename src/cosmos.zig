@@ -4,6 +4,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const Location = std.builtin.SourceLocation;
 const DList = @import("dlist.zig").DList;
+const DateTime = @import("chrono.zig").DateTime;
 
 pub const Level = enum(u8) {
     trace = 0,
@@ -324,6 +325,32 @@ const blackHoleRecorder = IRecorder{
     },
 };
 
+pub fn defaultCollapse(buffer: []u8, nucleon: *const Nucleon, atom: *const Atom) ![]const u8 {
+    const age_ns = nucleon.coords.ts - atom.birthTs;
+    const age_s = @as(f64, @floatFromInt(age_ns)) / 1_000_000_000.0;
+
+    const level_char: u8 = switch (nucleon.level) {
+        .trace => 'T',
+        .debug => 'D',
+        .info => 'I',
+        .notice => 'N',
+        .warn => 'W',
+        .err => 'E',
+    };
+
+    const dt = DateTime.fromTimestamp(nucleon.coords.ts);
+
+    return std.fmt.bufPrint(buffer,
+        "[{d: >6}:{d: >6}] {iso} {c}: {d:.3} [{s}] {s} ({s}:{d} in {s})",
+        .{
+            nucleon.coords.pid, nucleon.coords.tid, dt,
+            level_char, age_s, atom.name,
+            nucleon.msg,
+            nucleon.loc.file, nucleon.loc.line, nucleon.loc.fn_name
+        }
+    );
+}
+
 test "two coords" {
     const coords1 = Coordinates.init();
     const coords2 = Coordinates.init();
@@ -553,4 +580,70 @@ test "atom formatting methods without gluons using two atoms" {
     const n5 = iter2.next().?.containerOf(Nucleon, "link");
     try testing.expectEqual(.err, n5.level);
     try testing.expectEqualStrings("error code: 404 message: not found", n5.msg);
+}
+
+test "defaultCollapse formatting" {
+    const allocator = std.testing.allocator;
+
+    const cosmos = try Cosmos.create(allocator);
+    defer cosmos.destroy();
+
+    const atom = try Atom.create("TEST_ATOM", cosmos);
+    defer atom.destroy();
+
+    const nucleon = try Nucleon.create(
+        allocator,
+        .info,
+        @src(),
+        "Test message",
+        .{},
+    );
+    defer nucleon.destroy(allocator);
+
+    // Override the timestamp for predictable output
+    nucleon.coords.ts = 1703500245123000000; // 2023-12-25 10:30:45.123 UTC
+    nucleon.coords.pid = 12345;
+    nucleon.coords.tid = 67890;
+    atom.birthTs = nucleon.coords.ts - 100_000_000; // 100ms earlier
+
+    var buffer: [256]u8 = undefined;
+    const result = try defaultCollapse(buffer[0..], nucleon, atom);
+
+    // Expected format: [pid:tid] YYYY-MM-DD HH:mm:ss.SSS L: age [ATOM] message (file:line in function)
+    const expected_start = "[ 12345: 67890] 2023-12-25T10:30:45.123 I: 0.100 [TEST_ATOM] Test message ";
+    const zero = std.mem.indexOf(u8, result, expected_start);
+
+    try testing.expectEqual(zero, 0);
+    try testing.expect(std.mem.indexOf(u8, result, "cosmos.zig") != null);
+    try testing.expect(std.mem.indexOf(u8, result, "defaultCollapse formatting") != null);
+}
+
+test "defaultCollapse all log levels" {
+    const allocator = std.testing.allocator;
+    const cosmos = try Cosmos.create(allocator);
+    defer cosmos.destroy();
+    const atom = try Atom.create("TEST", cosmos);
+    defer atom.destroy();
+
+    const levels = [_]struct { level: Level, expected: []const u8 }{
+        .{ .level = .trace, .expected = " T: " },
+        .{ .level = .debug, .expected = " D: " },
+        .{ .level = .info, .expected = " I: " },
+        .{ .level = .notice, .expected = " N: " },
+        .{ .level = .warn, .expected = " W: " },
+        .{ .level = .err, .expected = " E: " },
+    };
+
+    for (levels) |test_case| {
+        const nucleon = try Nucleon.create(allocator, test_case.level, @src(), "test", .{});
+        defer nucleon.destroy(allocator);
+
+        nucleon.coords.ts = 1703500245123000000;
+        atom.birthTs = nucleon.coords.ts - 1;
+
+        var buffer: [256]u8 = undefined;
+        const result = try defaultCollapse(buffer[0..], nucleon, atom);
+        try testing.expect(std.mem.indexOf(u8, result, test_case.expected) != null);
+        try testing.expect(std.mem.indexOf(u8, result, " 0.000 ") != null);
+    }
 }
