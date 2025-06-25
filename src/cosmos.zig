@@ -351,6 +351,61 @@ pub fn defaultCollapse(buffer: []u8, nucleon: *const Nucleon, atom: *const Atom)
     );
 }
 
+pub const CollapseFunction = *const fn(buffer: []u8, nucleon: *const Nucleon, atom: *const Atom) anyerror![]const u8;
+
+pub const FileRecorder = struct {
+    const ColorMode = enum { auto, force, never };
+    const ColorPair = struct { open: []const u8, close: []const u8 };
+    const JUST_IS: ColorPair = .{ .open = "", .close = "" };
+
+    file: std.fs.File = std.io.getStdOut(),
+    min_level: Level = .info,
+    color_mode: ColorMode = .auto,
+    collapse_fn: CollapseFunction = defaultCollapse,
+
+    pub fn shouldPygmentize(self: *const FileRecorder) bool {
+        return switch (self.color_mode) {
+            .force => true,
+            .never => false,
+            .auto => self.file.supportsAnsiEscapeCodes(),
+        };
+    }
+
+    fn levelColor(level: Level) ColorPair {
+        return switch (level) {
+            .trace => .{ .open = "\x1b[90m", .close = "\x1b[0m" },
+            .debug => .{ .open = "\x1b[36m", .close = "\x1b[0m" },
+            .info => .{ .open = "\x1b[32m", .close = "\x1b[0m" },
+            .notice => JUST_IS,
+            .warn => .{ .open = "\x1b[33m", .close = "\x1b[0m" },
+            .err => .{ .open = "\x1b[31m", .close = "\x1b[0m" },
+        };
+    }
+
+    pub fn record(self: *FileRecorder, atom: *const Atom, nucleon: *const Nucleon) void {
+        var buffer: [1024]u8 = undefined;
+        const message = self.collapse_fn(buffer[0..], nucleon, atom) catch return;
+        const pygmentize = self.shouldPygmentize();
+        const color = if (pygmentize) levelColor(nucleon.level) else JUST_IS;
+        self.file.writer().print("{s}{s}{s}\n", .{color.open, message, color.close}) catch {};
+    }
+
+    pub fn shouldRecord(self: *FileRecorder, level: Level) bool {
+        return @intFromEnum(level) >= @intFromEnum(self.min_level);
+    }
+
+    pub fn get(self: *FileRecorder) IRecorder {
+       return IRecorder{
+           .ptr = self,
+           .vtable = &.{
+               .record = @ptrCast(&FileRecorder.record),
+               .shouldRecord = @ptrCast(&FileRecorder.shouldRecord),
+               .deinit = null,
+           },
+       };
+    }
+};
+
 test "two coords" {
     const coords1 = Coordinates.init();
     const coords2 = Coordinates.init();
@@ -646,4 +701,57 @@ test "defaultCollapse all log levels" {
         try testing.expect(std.mem.indexOf(u8, result, test_case.expected) != null);
         try testing.expect(std.mem.indexOf(u8, result, " 0.000 ") != null);
     }
+}
+
+test "FileRecorder with temp file" {
+    const cosmos = try Cosmos.create(std.testing.allocator);
+    defer cosmos.destroy();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    {
+        const file = try tmp_dir.dir.createFile("file-recorder.log", .{});
+        defer file.close();
+
+        var file_recorder = FileRecorder{ .file = file, .min_level = .trace };
+        try cosmos.addRecorder(file_recorder.get());
+
+        const atom = try cosmos.newAtom("TestAtom");
+        atom.trace(@src(), "Hello, trace", .{});
+        atom.debug(@src(), "Hello, debug", .{});
+        atom.info(@src(), "Hello, info", .{});
+        atom.notice(@src(), "Hello, notice", .{});
+        atom.warn(@src(), "Hello, warn", .{});
+        atom.err(@src(), "Hello, err", .{});
+    }
+
+    const content = try tmp_dir.dir.readFileAlloc(std.testing.allocator, "file-recorder.log", 1024);
+    defer std.testing.allocator.free(content);
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+
+    const line1 = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, line1, " T: ") != null);
+    try testing.expect(std.mem.indexOf(u8, line1, "Hello, trace") != null);
+
+    const line2 = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, line2, " D: ") != null);
+    try testing.expect(std.mem.indexOf(u8, line2, "Hello, debug") != null);
+
+    const line3 = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, line3, " I: ") != null);
+    try testing.expect(std.mem.indexOf(u8, line3, "Hello, info") != null);
+
+    const line4 = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, line4, " N: ") != null);
+    try testing.expect(std.mem.indexOf(u8, line4, "Hello, notice") != null);
+
+    const line5 = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, line5, " W: ") != null);
+    try testing.expect(std.mem.indexOf(u8, line5, "Hello, warn") != null);
+
+    const line6 = lines.next().?;
+    try testing.expect(std.mem.indexOf(u8, line6, " E: ") != null);
+    try testing.expect(std.mem.indexOf(u8, line6, "Hello, err") != null);
 }

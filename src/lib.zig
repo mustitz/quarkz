@@ -9,6 +9,7 @@ pub const Level = cosmos.Level;
 pub const Atom = cosmos.Atom;
 pub const Cosmos = cosmos.Cosmos;
 pub const IRecorder = cosmos.IRecorder;
+pub const FileRecorder = cosmos.FileRecorder;
 
 test {
     @import("std").testing.refAllDecls(@This());
